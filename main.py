@@ -22,11 +22,13 @@ def normalize(samples: np.ndarray) -> np.ndarray:
     return samples.astype(np.float32) / np.max(np.abs(samples))
 
 
-def am_modulate(samples: np.ndarray, fs: int, fc: int = 10000) -> np.ndarray:
+def am_modulate(samples: np.ndarray, sample_rate: int, carrier_frequency: int) -> np.ndarray:
     """Amplitude modulate the audio onto a carrier wave."""
-    t = np.arange(len(samples)) / fs
-    carrier = np.cos(2 * np.pi * fc * t)
-    return (1 + samples) * carrier
+    offset: int = 1 # Lowering this below 1 causes the distortion heard while tuning a radio.
+
+    time_interval = np.arange(len(samples)) / sample_rate
+    carrier = np.cos(2 * np.pi * carrier_frequency * time_interval)
+    return (offset + samples) * carrier
 
 
 def add_noise(signal: np.ndarray, noise_level: float = 0.05) -> np.ndarray:
@@ -35,29 +37,52 @@ def add_noise(signal: np.ndarray, noise_level: float = 0.05) -> np.ndarray:
     return signal + noise
 
 
-def butter_lowpass(cutoff, fs, order=6):
+def butter_lowpass(cutoff, sample_rate, order=6):
     """Design a Butterworth low-pass filter."""
-    nyq = 0.5 * fs
-    normal_cutoff = cutoff / nyq
+    nyquist_frequency = 0.5 * sample_rate
+    normal_cutoff = cutoff / nyquist_frequency
+
+    # Parameters for a lowpass filter, to be passed into lfilter.
     b, a = butter(order, normal_cutoff, btype="low", analog=False)
     return b, a
 
 
-def am_demodulate(signal: np.ndarray, fs: int, cutoff: int = 5000) -> np.ndarray:
+def am_envelope_demodulate(signal: np.ndarray, sample_rate: int, cutoff: int, full_wave: bool = True) -> np.ndarray:
     """Demodulate AM signal using rectification + low-pass Butterworth filter."""
-    rectified = np.abs(signal)
-    b, a = butter_lowpass(cutoff, fs, order=6)
+    order: int = 6
+
+    if full_wave:
+        # Use full-wave rectification
+        rectified = np.abs(signal)
+    else:
+        # Use half-wave rectification (old radio style)
+        rectified = np.maximum(0, signal)
+
+    b, a = butter_lowpass(cutoff, sample_rate, order)
     return lfilter(b, a, rectified)
 
+def am_synchronous_demodulate(signal: np.ndarray, sample_rate: int, carrier_frequency: int, cutoff: int) -> np.ndarray:
+    time_interval = np.arange(len(signal)) / sample_rate
+    # Local oscillator at carrier frequency
+    local_osc = np.cos(2 * np.pi * carrier_frequency * time_interval)
 
-def save_wav(samples: np.ndarray, fs: int, path: str):
+    # Multiply (mix) signal with local oscillator
+    mixed = signal * local_osc
+
+    # Low-pass filter to remove 2*fc component and leave baseband
+    b, a = butter_lowpass(cutoff, sample_rate, order=6)
+    demod = lfilter(b, a, mixed)
+
+    return demod
+
+def save_wav(samples: np.ndarray, sample_rate: int, path: str):
     """Save a NumPy array as a WAV file."""
     samples = samples / np.max(np.abs(samples))  # normalize
     samples = (samples * 32767).astype(np.int16)
 
     out = AudioSegment(
         samples.tobytes(),
-        frame_rate=fs,
+        frame_rate=sample_rate,
         sample_width=samples.dtype.itemsize,
         channels=1
     )
@@ -69,21 +94,28 @@ def main():
     parser.add_argument("input_file", help="Path to input audio file (.wav or .mp3)")
     args = parser.parse_args()
 
-    # Load + normalize
-    samples, fs = load_audio_to_numpy(args.input_file)
-    norm_samples = normalize(samples)
+    carrier_frequency: int = 10000
+    lowpass_cutoff: int = 5000
+    envelope_demod: bool = False
 
-    # Transmit
-    am_signal = am_modulate(norm_samples, fs, fc=10000)
+    # Load + normalize
+    samples, sample_rate = load_audio_to_numpy(args.input_file)
+    normalized_samples = normalize(samples)
+
+    # Modulate
+    am_signal = am_modulate(normalized_samples, sample_rate, carrier_frequency)
 
     # Add static noise
     received = add_noise(am_signal, noise_level=0.05)
 
-    # Receive (demodulation with filter)
-    demodulated = am_demodulate(received, fs, cutoff=5000)
+    # Demodulate
+    if envelope_demod:
+        demodulated = am_envelope_demodulate(received, sample_rate, lowpass_cutoff) # Carrier frequency still audible
+    else:
+        demodulated = am_synchronous_demodulate(received, sample_rate, carrier_frequency, lowpass_cutoff) # Cleaner
 
-    # Save demodulated output
-    save_wav(demodulated, fs, "output.wav")
+    # Save output
+    save_wav(demodulated, sample_rate, "output.wav")
     print("Saved AM demodulated audio as output.wav")
 
 
