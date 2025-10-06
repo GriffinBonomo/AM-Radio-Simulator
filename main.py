@@ -34,29 +34,24 @@ def am_modulate(samples: np.ndarray, sample_rate: int, carrier_frequency: int) -
 def add_noise_fullspectrum(signal: np.ndarray, noise_level: float = 0.05) -> np.ndarray:
     """Add Gaussian noise to simulate static."""
     noise = noise_level * np.random.randn(len(signal))
-    #return signal + noise
-    return noise
+    return signal + noise
 
 def add_noise_bandlimited(signal: np.ndarray, sample_rate: int, noise_level: float = 0.05, low_cutoff: int = 3000, high_cutoff: int = 10000, order: int = 6) -> np.ndarray:
     """Add band-limited noise to simulate radio hiss"""
     noise = noise_level * np.random.randn(len(signal))
-    b_low, a_low = butter_filter(low_cutoff, sample_rate, "low", order)
-    b_high, a_high = butter_filter(high_cutoff, sample_rate, "high", order)
 
-    filtered = lfilter(b_low, a_low, noise)
-    filtered = lfilter(b_high, b_high, noise)
-    #return signal + filtered
-    return filtered
+    filtered = butter_filter(noise, sample_rate, low_cutoff, "high", order)
+    filtered = butter_filter(filtered, sample_rate, high_cutoff, "low", order)
+    return signal + filtered
 
-
-def butter_filter(cutoff, sample_rate, btype, order=6):
+def butter_filter(signal, sample_rate, cutoff, btype, order=6):
     """Butterworth filter. btype accepts 'high' and 'low' for a highpass and lowpass filter respectively."""
     nyquist_frequency = 0.5 * sample_rate
     normal_cutoff = cutoff / nyquist_frequency
 
     # Parameters for a lowpass filter, to be passed into lfilter.
     b, a = butter(order, normal_cutoff, btype=btype, analog=False)
-    return b, a
+    return lfilter(b, a, signal)
 
 
 def am_envelope_demodulate(signal: np.ndarray, sample_rate: int, cutoff: int, full_wave: bool = True) -> np.ndarray:
@@ -70,8 +65,7 @@ def am_envelope_demodulate(signal: np.ndarray, sample_rate: int, cutoff: int, fu
         # Use half-wave rectification (old radio style)
         rectified = np.maximum(0, signal)
 
-    b, a = butter_filter(cutoff, sample_rate, "low", order)
-    return lfilter(b, a, rectified)
+    return butter_filter(rectified, sample_rate, cutoff, "low", order)
 
 def am_synchronous_demodulate(signal: np.ndarray, sample_rate: int, carrier_frequency: int, cutoff: int) -> np.ndarray:
     time_interval = np.arange(len(signal)) / sample_rate
@@ -81,9 +75,7 @@ def am_synchronous_demodulate(signal: np.ndarray, sample_rate: int, carrier_freq
     # Multiply (mix) signal with local oscillator
     mixed = signal * local_osc
 
-    # Low-pass filter to remove 2*fc component and leave baseband
-    b, a = butter_filter(cutoff, sample_rate, "low", order=6)
-    return lfilter(b, a, mixed)
+    return butter_filter(mixed, sample_rate, cutoff, "low")
 
 def save_wav(samples: np.ndarray, sample_rate: int, path: str):
     """Save a NumPy array as a WAV file."""
