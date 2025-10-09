@@ -16,12 +16,14 @@ def main():
     normalized_samples = normalize(samples)
     # Modulate
     am_signal = am_modulate(normalized_samples, sample_rate, CARRIER_FREQUENCY)
+
     # Add effects
     received = add_noise_bandlimited(am_signal, sample_rate)
-    received = add_crackle(received, sample_rate)
+    received = add_crackle(received, sample_rate, CRACKLE_DENSITY, CRACKLE_INTENSITY)
 
     # De-modulate
     demodulated = am_synchronous_demodulate(received, sample_rate, CARRIER_FREQUENCY, LOWPASS_CUTOFF)
+    
     # Save as .WAV
     save_wav(demodulated, sample_rate, "output.wav")
     print("Saved AM demodulated audio as output.wav")

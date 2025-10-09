@@ -1,4 +1,5 @@
 import numpy as np
+from scipy.signal import butter, lfilter
 from .filters import butter_filter
 
 def add_noise_fullspectrum(signal: np.ndarray, noise_level: float = 0.05) -> np.ndarray:
@@ -14,8 +15,8 @@ def add_noise_bandlimited(signal: np.ndarray, sample_rate: int, noise_level: flo
     filtered = butter_filter(filtered, sample_rate, high_cutoff, "low", order)
     return signal + filtered
 
-def add_crackle(signal: np.ndarray, sample_rate: int, density=0.001, intensity=0.3):
-    crackle_track = np.zeros_like(signal) # just the crackles
+def add_crackle(signal: np.ndarray, sample_rate: int, density: float, intensity: float):
+    crackle_track = np.copy(signal)
     num_crackles = int(len(signal) * density)
     indices = np.random.randint(0, len(signal), num_crackles)
 
@@ -25,9 +26,13 @@ def add_crackle(signal: np.ndarray, sample_rate: int, density=0.001, intensity=0
         if end <= i:
             continue
 
-        burst = np.random.randn(burst_length) * intensity
-        crackle_track[i:end] += burst[:end - i]
+        burst = np.random.randn(burst_length)
 
-    result = signal + crackle_track
-    return np.clip(result, -1, 1)
+        b, a = butter(2, [0.05, 0.3], btype='band') 
+        burst = lfilter(b, a, burst)
+        burst *= intensity
+
+        crackle_track[i:end] += burst[:end - 1]
+
+    return np.clip(crackle_track, -1, 1)
 
